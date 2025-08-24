@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.pytest_cache/
+.venv/
+venv/
+env/
+ENV/
+my_env/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Data & derived artifacts
+data/indexes/
+models/
+logs.txt
+
+# OS/Editor
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Secrets/keys
+*.pem
+*.key
+*.crt
+*.pub
+id_rsa
+*.pub
+id_ed25519
+id_ed25519.pub
+Ocoderdude
+

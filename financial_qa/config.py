@@ -15,7 +15,7 @@ for p in [DATA_DIR, RAW_DIR, PROCESSED_DIR, INDEX_DIR, MODELS_DIR]:
 
 # Defaults - Use a more reliable model for better text generation
 EMBEDDING_MODEL_NAME = os.environ.get("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-GENERATION_MODEL_NAME = os.environ.get("GEN_MODEL", "google/flan-t5-large")  # Changed to flan-t5-large for better quality
+GENERATION_MODEL_NAME = os.environ.get("GEN_MODEL", "google/flan-t5-small")
 FAISS_INDEX_PATH = INDEX_DIR / "faiss_index.bin"
 BM25_INDEX_PATH = INDEX_DIR / "bm25_index.pkl"
 CHUNKS_META_PATH = INDEX_DIR / "chunks_meta.pkl"

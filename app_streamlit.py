@@ -4,6 +4,7 @@ import pickle
 import streamlit as st
 import pandas as pd
 import re
+import torch
 
 from financial_qa.config import (
 	INDEX_DIR, CHUNKS_META_PATH, FAISS_INDEX_PATH, BM25_INDEX_PATH,
@@ -177,17 +178,15 @@ if run_batch:
 		st.warning("Please provide at least one question.")
 	else:
 		retriever = get_retriever()
-		rag_gen = get_rag_generator()
-		ft_gen = get_ft_generator()
 		rows = []
 		prog = st.progress(0)
+		# Pass 1: RAG (no adapter)
+		_rag = T5Generator(use_adapter=False)
 		for i, q in enumerate(qs, start=1):
-			# Retrieve once per question
 			results, rt_retrieve = retriever.retrieve(q, top_k_dense=6, top_k_sparse=6, alpha=0.6, adaptive=True)
 			ctx = _join_context(results)
 			exp = _derive_expected_from_context(q, ctx)
-			# RAG
-			rag_res = rag_gen.generate(q, results)
+			rag_res = _rag.generate(q, results)
 			time_rag = (rt_retrieve + rag_res.inference_time_sec) if include_retrieval_time else rag_res.inference_time_sec
 			if exp.lower() in _DEF_NA:
 				correct_rag = "Y" if any(k in rag_res.answer.lower() for k in _DEF_NA) else "N"
@@ -204,8 +203,21 @@ if run_batch:
 				"Expected": exp,
 				"Correct (Y/N)": correct_rag
 			})
-			# Fine-Tuned
-			ft_res = ft_gen.generate(q, results)
+			prog.progress(int(i / max(1, len(qs)) * 50))
+		# Free RAG generator to lower peak memory
+		del _rag
+		try:
+			if torch.cuda.is_available():
+				torch.cuda.empty_cache()
+		except Exception:
+			pass
+		# Pass 2: Fine-Tuned (adapter) – instantiate after freeing RAG
+		_ft = T5Generator(use_adapter=True)
+		for j, q in enumerate(qs, start=1):
+			results, rt_retrieve = retriever.retrieve(q, top_k_dense=6, top_k_sparse=6, alpha=0.6, adaptive=True)
+			ctx = _join_context(results)
+			exp = _derive_expected_from_context(q, ctx)
+			ft_res = _ft.generate(q, results)
 			time_ft = (rt_retrieve + ft_res.inference_time_sec) if include_retrieval_time else ft_res.inference_time_sec
 			if exp.lower() in _DEF_NA:
 				correct_ft = "Y" if any(k in ft_res.answer.lower() for k in _DEF_NA) else "N"
@@ -222,7 +234,7 @@ if run_batch:
 				"Expected": exp,
 				"Correct (Y/N)": correct_ft
 			})
-			prog.progress(int(i / max(1, len(qs)) * 100))
+			prog.progress(50 + int(j / max(1, len(qs)) * 50))
 		prog.empty()
 		df = pd.DataFrame(rows, columns=["Question", "Method", "Answer", "Confidence", "Time (s)", "Expected", "Correct (Y/N)"])
 		st.dataframe(df, use_container_width=True)

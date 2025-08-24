@@ -259,7 +259,18 @@ class T5Generator:
 	def __init__(self, model_name: str = GENERATION_MODEL_NAME, use_adapter: bool = False):
 		"""Load tokenizer/model; optionally attach LoRA adapter if present; move to device."""
 		self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-		self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+		if torch.cuda.is_available():
+			self.model = AutoModelForSeq2SeqLM.from_pretrained(
+				model_name,
+				low_cpu_mem_usage=True,
+				torch_dtype=torch.float16,
+				device_map="auto",
+			)
+		else:
+			self.model = AutoModelForSeq2SeqLM.from_pretrained(
+				model_name,
+				low_cpu_mem_usage=True,
+			)
 		if use_adapter:
 			adapter_dir = MODELS_DIR / "flan_t5_small_lora"
 			if adapter_dir.exists():
@@ -270,10 +281,12 @@ class T5Generator:
 					pass
 		self.model.eval()
 		self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-		self.model.to(self.device)
+		# If accelerate placed modules automatically, avoid redundant .to()
+		if not hasattr(self.model, "hf_device_map") and self.model.device != self.device:
+			self.model.to(self.device)
 	
 	@torch.inference_mode()
-	def generate(self, query: str, retrieved: List[RetrievedChunk], max_context_chars: int = 3000) -> GenerationResult:
+	def generate(self, query: str, retrieved: List[RetrievedChunk], max_context_chars: int = 2000) -> GenerationResult:
 		"""Generate an answer from top retrieved chunks; clean, then fallback-reconstruct if needed."""
 		# Guardrail: if top score is very low, declare out-of-scope
 		contexts_sorted = sorted(retrieved, key=lambda x: x.score, reverse=True)
@@ -295,23 +308,23 @@ class T5Generator:
 			accum.append(c.text)
 			chars += len(c.text)
 		prompt = _format_prompt(query, accum)
-		inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=2048).to(self.device)
+		inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024).to(self.device)
 		start = time.time()
 		
 		# Try different generation strategies to get better output
 		try:
-			# First try with more controlled generation
+			# First try with more controlled generation but lower memory
 			outputs = self.model.generate(
-				**inputs, 
-				max_new_tokens=128, 
-				num_beams=5, 
+				**inputs,
+				max_new_tokens=64,
+				num_beams=3,
 				do_sample=False,
 				early_stopping=True,
-				no_repeat_ngram_size=2
+				no_repeat_ngram_size=2,
 			)
 		except Exception:
 			# Fallback to simpler generation
-			outputs = self.model.generate(**inputs, max_new_tokens=128, num_beams=3, do_sample=False)
+			outputs = self.model.generate(**inputs, max_new_tokens=64, num_beams=2, do_sample=False)
 		
 		elapsed = time.time() - start
 		answer = self.tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
